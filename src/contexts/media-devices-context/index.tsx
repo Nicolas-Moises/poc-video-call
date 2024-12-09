@@ -1,5 +1,6 @@
 'use client'
-import { createContext, Dispatch, ReactNode, SetStateAction, useContext, useEffect, useState } from "react";
+import { createContext, Dispatch, ReactNode, SetStateAction, useCallback, useContext, useEffect, useState } from "react";
+import { toast } from "sonner";
 
 interface MediaDeviceContextProps {
   userMediaStream: MediaStream | null
@@ -13,6 +14,7 @@ interface MediaDeviceContextProps {
     audioDeviceId: string;
     videoDeviceId: string;
   }
+  getMediaError: null | string;
   toggleVideo: () => void;
   toggleMicrophone: () => void;
   handleChangeDevices: (deviceId: string, deviceKind: "audioinput" | "videoinput") => void
@@ -28,6 +30,11 @@ interface DeviceCollection {
   video: MediaDeviceInfo[];
 }
 
+interface MediaStreamControls {
+  audio: boolean | MediaTrackConstraints;
+  video: boolean | MediaTrackConstraints;
+}
+
 const DEFAULT_DEVICES: DeviceCollection = {
   audio: [],
   video: [],
@@ -41,60 +48,70 @@ export function MediaDeviceProvider({ children }: { children: ReactNode}) {
     audioDeviceId: '',
     videoDeviceId: '',
   })
+  const [getMediaError, setGetMediaError] = useState<string | null>(null)
 
   const [audioEnabled, setAudioEnabled] = useState(true)
   const [videoEnabled, setVideoEnabled] = useState(true)
   
   // first: catch media streams
-  const constraints: MediaStreamConstraints = {
-    audio: {
-      deviceId: {
-        ideal: selectedDevices.audioDeviceId ? selectedDevices.audioDeviceId : undefined,
-      }
-    },
-    video: {
-      deviceId: {
-        ideal: selectedDevices.videoDeviceId? selectedDevices.videoDeviceId : undefined,
-      }
-    },
-  }
+  // const constraints: MediaStreamConstraints = {
+  //   audio: {
+  //     deviceId: {
+  //       ideal: selectedDevices.audioDeviceId ? selectedDevices.audioDeviceId : undefined,
+  //     }
+  //   },
+  //   video: {
+  //     deviceId: {
+  //       ideal: selectedDevices.videoDeviceId? selectedDevices.videoDeviceId : undefined,
+  //     }
+  //   },
+  // }
 
-  const getMicAndCamera = async () => {
+  const getMicAndCamera = useCallback(async (constraints: MediaStreamControls) => {
     try {
-      stopActiveTracks()
-      setIsFetchingDevices(true)
       await navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
         setUserMediaStream(stream)
+        return stream;
       })
     } catch (error) {
       if(error instanceof DOMException) {
-        console.log(error)
+        console.error(error)
         switch(error.name) {
           case 'NotAllowedError':
-            alert('User denied the request for camera and microphone.');
+            toast.error('O usuário negou a solicitação de câmera e microfone.');
+            setGetMediaError('O usuário negou a solicitação de câmera e microfone.')
             break;
           case 'NotFoundError':
-            alert('No camera or microphone found.');
+            toast.error('Nenhuma câmera ou microfone encontrado.');
+            setGetMediaError('Nenhuma câmera ou microfone encontrado.')
             break;
           case 'NotSupportedError':
-            alert('The current browser does not support getUserMedia API.');
+            toast.error('O navegador atual não oferece suporte à API getUserMedia.');
+            setGetMediaError('O navegador atual não oferece suporte à API getUserMedia.');
             break;
           case 'NetworkError':
-            alert('Network error.');
+            toast.error('Erro de rede.');
+            setGetMediaError('Erro de rede.');
             break;
           default:
-            alert('An unknown error occurred.');
+            toast.error('Ocorreu um erro desconhecido.');
+            setGetMediaError('Ocorreu um erro desconhecido.');
         }
       }
-      console.error(error)
-    } finally {
-      setIsFetchingDevices(false)
     }
-  }
+  }, [])
+
+  const startStream = async () => {
+    await getMicAndCamera({
+      audio: true,
+      video: true
+    });
+  };
 
   const stopActiveTracks = () => {
     if (userMediaStream) {
       userMediaStream.getTracks().forEach(track => track.stop());
+      setUserMediaStream(null);
     }
   };
 
@@ -112,13 +129,18 @@ export function MediaDeviceProvider({ children }: { children: ReactNode}) {
     if (userMediaStream) {
       const videoTracks = userMediaStream.getVideoTracks();
       videoTracks.forEach((track) => {
-        track.enabled =!track.enabled;
+        if(track.enabled) {
+          track.enabled = false;
+        }
+        else {
+          track.enabled = true;
+        }
         setVideoEnabled(track.enabled);
       });
     }
   }
 
-  const fetchDevices = async () => {
+  const getDevices = useCallback(async () => {
     try {
       setIsFetchingDevices(true)
 
@@ -158,38 +180,55 @@ export function MediaDeviceProvider({ children }: { children: ReactNode}) {
     } finally {
       setIsFetchingDevices(false)
     }
-  }
+  }, [])
 
-  const handleChangeDevices = (deviceId: string, deviceKind: "audioinput" | "videoinput") => {
-    const newConstraints = {
-      ...constraints,
-      [deviceKind]: {
-        exact: deviceId,
-      }
+  const handleChangeDevices = useCallback(async (deviceId: string, deviceKind: "audioinput" | "videoinput") => {
+    if (!userMediaStream) {
+      throw new Error('No active media stream');
     }
 
-    navigator.mediaDevices.getUserMedia(newConstraints).then((stream) => {
-      setUserMediaStream(stream)
+    const tracks = deviceKind === 'audioinput' 
+    ? userMediaStream.getAudioTracks() 
+    : userMediaStream.getVideoTracks();
 
-      const tracks = stream.getAudioTracks();
-        console.log(tracks);
-    })
+    tracks.forEach(track => track.stop());
 
-    setSelectedDevices((prev) => ({...prev, [deviceKind]: deviceId }))
-  }
+    const newStream = await getMicAndCamera({
+      audio: deviceKind === 'audioinput' ? { deviceId: { exact: deviceId } } : true,
+      video: deviceKind === 'videoinput' ? { deviceId: { exact: deviceId } } : true
+    });
+    if(deviceKind === 'audioinput') {
+      setSelectedDevices({
+        ...selectedDevices,
+        audioDeviceId: deviceId,
+      })
+    } else {
+      setSelectedDevices({
+       ...selectedDevices,
+        videoDeviceId: deviceId,
+      })
+    }
+
+    return newStream;
+  }, [userMediaStream, getMicAndCamera, selectedDevices]) 
 
   useEffect(() => {
     // check if the browser supports media devices and getUserMedia API
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       alert('Media devices are not supported in this browser.');
+      setGetMediaError('')
       return;
     }
-    getMicAndCamera().then(() => fetchDevices())
+
+    startStream().then(() => getDevices())
+    
+    navigator.mediaDevices.addEventListener('devicechange', getDevices);
+
+    // Cleanup
     return () => {
-      if(userMediaStream) {
-        userMediaStream.getTracks().forEach(track => track.stop())
-      }
-    }
+      navigator.mediaDevices.removeEventListener('devicechange', getDevices);
+      stopActiveTracks();
+    };
   }, [])
 
   return (
@@ -203,7 +242,8 @@ export function MediaDeviceProvider({ children }: { children: ReactNode}) {
       toggleMicrophone,
       toggleVideo,
       videoEnabled,
-      audioEnabled
+      audioEnabled,
+      getMediaError,
     }}>
       {children}
     </MediaDeviceContext.Provider>

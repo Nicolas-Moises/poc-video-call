@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useMediaDevices } from "@/contexts/media-devices-context"
-import { Camera, CameraOff, Mic, MicOff, User } from "lucide-react"
+import { Camera, CameraOff, CircleAlert, Mic, MicOff, User } from "lucide-react"
 import Link from "next/link"
 
 export function SetupConfig() {
@@ -15,23 +15,32 @@ export function SetupConfig() {
     userMediaStream, 
     devices, 
     isFetchingDevices, 
-    setSelectedDevices, 
     selectedDevices, 
     handleChangeDevices, 
     toggleMicrophone, 
-    audioEnabled,
     toggleVideo,
-    videoEnabled
+    audioEnabled,
+    videoEnabled,
+    getMediaError,
   } = useMediaDevices()
-
-  const handleSelectDevice = (deviceId: string, deviceKind: "audioinput" | "videoinput") => {
-    setSelectedDevices((prev) => ({...prev, [deviceKind]: deviceId }))
-  }
 
   return (
     <div className="flex flex-col gap-6">
-      
       <h2 className="font-semibold tracking-tighter text-2xl">Setup config</h2>
+
+      {getMediaError && (
+          <div className="rounded-lg border border-red-500/50 px-4 py-3 text-red-600 max-w-xl">
+            <p className="text-sm">
+              <CircleAlert
+                className="-mt-0.5 me-3 inline-flex opacity-60"
+                size={16}
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+              {getMediaError}
+            </p>
+          </div>
+      )}
       <div className="space-y-4 max-w-xl">
         <h3 className="font-semibold tracking-tighter">Selecione o microfone</h3>
         {isFetchingDevices || !userMediaStream ? (
@@ -42,7 +51,7 @@ export function SetupConfig() {
           <>
             <div className="flex gap-4">
               <Select defaultValue={selectedDevices.audioDeviceId} onValueChange={(deviceId) => {
-                handleChangeDevices(deviceId, "audioinput")
+               handleChangeDevices(deviceId, "audioinput")
               }}>
                 <SelectTrigger className="flex-1">
                   <SelectValue placeholder="Selecione um dispositivo de microfone" />
@@ -75,7 +84,7 @@ export function SetupConfig() {
         ) : (
           <div className="flex gap-4">
             <Select defaultValue={selectedDevices.videoDeviceId} onValueChange={(deviceId) => {
-              handleSelectDevice(deviceId, "videoinput")
+              handleChangeDevices(deviceId, "videoinput")
             }}>
               <SelectTrigger>
                 <SelectValue placeholder="Selecione um dispositivo de câmera" />
